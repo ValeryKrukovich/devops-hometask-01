@@ -23,6 +23,7 @@ services:
     #   - подобрать осмысленные параметры проверки: как часто опрашивать, сколько
     #     попыток до признания unhealthy, сколько ждать перед самой первой проверкой
     image: postgres:16-alpine
+    restart: unless-stopped
     env_file:
       - .env.development.db
     ports:
@@ -52,6 +53,7 @@ services:
     #     по пути /app/config; делаем это READ-ONLY, чтобы контейнер физически
     #     не мог изменить файл на хосте
     image: ${DOCKERHUB_USERNAME}/todo-back:${IMAGE_TAG}
+    restart: unless-stopped
     platform: linux/amd64
     env_file:
       - .env.development.back
@@ -79,6 +81,7 @@ services:
     #     у back в этом задании нет healthcheck, поэтому здесь нужна другая condition
     #     (которая ждёт только запуска контейнера, не его health-статуса)
     image: ${DOCKERHUB_USERNAME}/todo-front:${IMAGE_TAG}
+    restart: unless-stopped
     platform: linux/amd64
     ports:
       - "18080:80"
