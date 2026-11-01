@@ -20,25 +20,27 @@ jobs:
           - service: front
             build_args: "--build-arg VITE_API_URL=${{ vars.VITE_API_URL }}"
     env:
-      IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/todo-${{ matrix.service }}
+      IMAGE: ${{ secrets.DOCKER_USER }}/todo-${{ matrix.service }}
     steps:
       - uses: actions/checkout@v4
- 
+
       - name: Log in to Docker Hub
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ vars.DOCKERHUB_USERNAME }}" --password-stdin
- 
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASS }}
+
       - name: Build image
         run: |
           docker build ${{ matrix.build_args }} \
             -t "$IMAGE:sha-${{ github.sha }}" \
             -t "$IMAGE:latest" \
             ./${{ matrix.service }}
- 
+
       - name: Push image
         run: |
           docker push "$IMAGE:sha-${{ github.sha }}"
           docker push "$IMAGE:latest"
- 
 
   deploy:
     needs: build
@@ -62,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
- 
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -70,7 +72,6 @@ jobs:
           cache-dependency-path: |
             back/package-lock.json
             front/package-lock.json
- 
 
       - name: Create .env.production.e2e
         env:
@@ -81,7 +82,7 @@ jobs:
           echo "E2E_API_URL=${API_URL}" >> .env.production.e2e
           echo "APP_VERSION=sha-${{ github.sha }}" >> .env.production.e2e
           cat .env.production.e2e
- 
+
       - name: Smoke test deployed app
         run: make smoke-deployed
 
@@ -96,10 +97,10 @@ jobs:
           BUILD="${{ needs.build.result }}"
           DEPLOY="${{ needs.deploy.result }}"
           VERIFY="${{ needs.verify.result }}"
- 
+
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           WHERE="${{ github.repository }} @ ${{ github.ref_name }}"
- 
+
           if [ "$CHECKS" != "success" ]; then
             TEXT="❌ Type-check упал%0A$WHERE%0A$RUN_URL"
           elif [ "$BUILD" != "success" ]; then
@@ -111,11 +112,11 @@ jobs:
           else
             TEXT="✅ Деплой успешен%0A$WHERE%0AActor: ${{ github.actor }}%0AVersion: sha-${{ github.sha }}"
           fi
- 
+
           RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             -d "text=$TEXT" \
             -d "disable_web_page_preview=true")
- 
+
           echo "$RESPONSE"
           echo "$RESPONSE" | grep -q '"ok":true' || { echo "Telegram API rejected"; exit 1; }
