@@ -1,0 +1,121 @@
+name: Deploy
+
+on:
+  push:
+    branches: [week*]
+
+jobs:
+  checks:
+    uses: ./.github/workflows/typecheck.yaml
+
+  build:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - service: back
+            build_args: ""
+          - service: front
+            build_args: "--build-arg VITE_API_URL=${{ vars.VITE_API_URL }}"
+    env:
+      IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/todo-${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+ 
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ vars.DOCKERHUB_USERNAME }}" --password-stdin
+ 
+      - name: Build image
+        run: |
+          docker build ${{ matrix.build_args }} \
+            -t "$IMAGE:sha-${{ github.sha }}" \
+            -t "$IMAGE:latest" \
+            ./${{ matrix.service }}
+ 
+      - name: Push image
+        run: |
+          docker push "$IMAGE:sha-${{ github.sha }}"
+          docker push "$IMAGE:latest"
+ 
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd ${{ vars.DEPLOY_PATH }}
+            sed -i "s|^APP_VERSION=.*|APP_VERSION=sha-${{ github.sha }}|" .env.development.compose
+            docker compose --env-file .env.development.compose pull back front
+            docker compose --env-file .env.development.compose up -d --no-deps back front
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+ 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            back/package-lock.json
+            front/package-lock.json
+ 
+
+      - name: Create .env.production.e2e
+        env:
+          API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          # vars.VITE_API_URL вида https://домен/api → отрезаем /api
+          echo "E2E_BASE_URL=${API_URL%/api}" > .env.production.e2e
+          echo "E2E_API_URL=${API_URL}" >> .env.production.e2e
+          echo "APP_VERSION=sha-${{ github.sha }}" >> .env.production.e2e
+          cat .env.production.e2e
+ 
+      - name: Smoke test deployed app
+        run: make smoke-deployed
+
+  notify:
+    needs: [checks, build, deploy, verify]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Telegram message
+        run: |
+          CHECKS="${{ needs.checks.result }}"
+          BUILD="${{ needs.build.result }}"
+          DEPLOY="${{ needs.deploy.result }}"
+          VERIFY="${{ needs.verify.result }}"
+ 
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          WHERE="${{ github.repository }} @ ${{ github.ref_name }}"
+ 
+          if [ "$CHECKS" != "success" ]; then
+            TEXT="❌ Type-check упал%0A$WHERE%0A$RUN_URL"
+          elif [ "$BUILD" != "success" ]; then
+            TEXT="❌ Build упал%0A$WHERE%0A$RUN_URL"
+          elif [ "$DEPLOY" != "success" ]; then
+            TEXT="❌ Deploy упал%0A$WHERE%0A$RUN_URL"
+          elif [ "$VERIFY" != "success" ]; then
+            TEXT="❌ Smoke не прошёл (задеплоено, но не отвечает корректно)%0A$WHERE%0A$RUN_URL"
+          else
+            TEXT="✅ Деплой успешен%0A$WHERE%0AActor: ${{ github.actor }}%0AVersion: sha-${{ github.sha }}"
+          fi
+ 
+          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=$TEXT" \
+            -d "disable_web_page_preview=true")
+ 
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q '"ok":true' || { echo "Telegram API rejected"; exit 1; }

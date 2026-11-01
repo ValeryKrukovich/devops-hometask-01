@@ -52,7 +52,7 @@ services:
     #   - примонтировать локальную папку с runtime-конфигом внутрь контейнера
     #     по пути /app/config; делаем это READ-ONLY, чтобы контейнер физически
     #     не мог изменить файл на хосте
-    image: ${DOCKERHUB_USERNAME}/todo-back:${IMAGE_TAG}
+    image: ${DOCKERHUB_USERNAME}/todo-back:${APP_VERSION}
     restart: unless-stopped
     platform: linux/amd64
     env_file:
@@ -80,7 +80,7 @@ services:
     #   - выразить зависимость от back, но НЕ через service_healthy:
     #     у back в этом задании нет healthcheck, поэтому здесь нужна другая condition
     #     (которая ждёт только запуска контейнера, не его health-статуса)
-    image: ${DOCKERHUB_USERNAME}/todo-front:${IMAGE_TAG}
+    image: ${DOCKERHUB_USERNAME}/todo-front:${APP_VERSION}
     restart: unless-stopped
     platform: linux/amd64
     ports:
